@@ -1,0 +1,1713 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Shield, Terminal, Network, AlertTriangle, CheckCircle, Clock, Award, 
+  Cpu, Server, HardDrive, Globe, Lock, Play, RefreshCw, HelpCircle, 
+  Search, Filter, Plus, Trash2, Edit, ChevronRight, Activity, Zap, 
+  UserCheck, ArrowRight, BarChart2, Layers, Key, Eye, FileText, Check, 
+  X, AlertCircle, Sparkles, BookOpen, User, DollarSign, Download, Upload, Info, Code, Copy
+} from 'lucide-react';
+
+// ==========================================
+// INITIAL SIMULATED STATE & TOPOLOGY DATA
+// ==========================================
+
+const INITIAL_CAREER = {
+  xp: 120,
+  level: 1,
+  title: "IT Support Technician",
+  coins: 250,
+  completedMissions: [],
+  achievements: ['first_login']
+};
+
+const CAREER_RANKS = [
+  { level: 1, title: "IT Support Technician", minXp: 0, icon: "🔧" },
+  { level: 2, title: "Junior Network Engineer", minXp: 200, icon: "📡" },
+  { level: 3, title: "Network Engineer", minXp: 500, icon: "🌐" },
+  { level: 4, title: "Senior Network Engineer", minXp: 1000, icon: "⚡" },
+  { level: 5, title: "Network Security Engineer", minXp: 1800, icon: "🛡️" },
+  { level: 6, title: "Senior Network Security Engineer", minXp: 2800, icon: "🔥" },
+  { level: 7, title: "Network Security Architect", minXp: 4200, icon: "👑" }
+];
+
+const INITIAL_DEVICES = {
+  'hq-core-sw': {
+    id: 'hq-core-sw',
+    name: 'HQ-Core-SW01',
+    type: 'switch',
+    status: 'online',
+    ip: '10.10.1.2',
+    mac: '00:1A:2B:3C:4D:01',
+    role: 'Layer 3 Core Switch',
+    vchans: [
+      { id: 10, name: 'EMPLOYEE_VLAN', subnet: '10.10.10.0/24' },
+      { id: 20, name: 'SERVER_VLAN', subnet: '10.10.20.0/24' },
+      { id: 99, name: 'MGMT_VLAN', subnet: '10.10.99.0/24' }
+    ],
+    interfaces: [
+      { name: 'Gi0/1', mode: 'trunk', vlan: 1, status: 'up', ip: '10.10.1.2/24' },
+      { name: 'Gi0/2', mode: 'access', vlan: 10, status: 'up', ip: 'unassigned' },
+      { name: 'Gi0/3', mode: 'access', vlan: 20, status: 'up', ip: 'unassigned' },
+      { name: 'Gi0/4', mode: 'access', vlan: 99, status: 'up', ip: 'unassigned' }
+    ],
+    routes: [
+      { dst: '0.0.0.0/0', nexthop: '10.10.1.1', interface: 'Gi0/1', proto: 'static' },
+      { dst: '10.10.10.0/24', nexthop: 'directly connected', interface: 'Vlan10', proto: 'connected' },
+      { dst: '10.10.20.0/24', nexthop: 'directly connected', interface: 'Vlan20', proto: 'connected' }
+    ]
+  },
+  'hq-fw': {
+    id: 'hq-fw',
+    name: 'HQ-PA-FW01',
+    type: 'firewall',
+    status: 'online',
+    ip: '10.10.1.1',
+    mac: '00:1A:2B:3C:4D:00',
+    role: 'Palo Alto NGFW Perimeter',
+    zones: ['Trust', 'Untrust', 'DMZ'],
+    interfaces: [
+      { name: 'ethernet1/1', zone: 'Untrust', ip: '203.0.113.2/30', status: 'up' },
+      { name: 'ethernet1/2', zone: 'Trust', ip: '10.10.1.1/24', status: 'up' },
+      { name: 'ethernet1/3', zone: 'DMZ', ip: '172.16.1.1/24', status: 'up' }
+    ]
+  },
+  'br1-router': {
+    id: 'br1-router',
+    name: 'Branch1-RTR01',
+    type: 'router',
+    status: 'warning',
+    ip: '10.20.1.1',
+    mac: '00:1A:2B:3C:88:01',
+    role: 'Branch 1 Gateway Router',
+    interfaces: [
+      { name: 'Gi0/0', mode: 'routed', status: 'up', ip: '203.0.113.10/30' },
+      { name: 'Gi0/1', mode: 'routed', status: 'up', ip: '10.20.1.1/24' }
+    ],
+    routes: [
+      { dst: '10.20.1.0/24', nexthop: 'directly connected', interface: 'Gi0/1', proto: 'connected' }
+    ],
+    ospfNeighbors: []
+  },
+  'srv-dns-dhcp': {
+    id: 'srv-dns-dhcp',
+    name: 'HQ-DC01-DNS-DHCP',
+    type: 'server',
+    status: 'online',
+    ip: '10.10.20.10',
+    mac: '00:1A:2B:3C:99:10',
+    vlan: 20,
+    role: 'Primary Domain & DNS Server'
+  },
+  'pc-emp-01': {
+    id: 'pc-emp-01',
+    name: 'DESKTOP-FIN-01',
+    type: 'host',
+    status: 'online',
+    ip: '10.10.10.45',
+    gateway: '10.10.10.1',
+    mac: '00:1A:2B:EE:11:45',
+    vlan: 10,
+    role: 'Finance Department Workstation'
+  }
+};
+
+const INITIAL_FIREWALL_RULES = [
+  { id: 1, name: 'Allow-Internal-DNS', srcZone: 'Trust', dstZone: 'DMZ', srcAddr: '10.10.10.0/24', dstAddr: '10.10.20.10', app: 'dns', service: 'UDP/53', action: 'allow', hitCount: 1420 },
+  { id: 2, name: 'Allow-Outbound-Web', srcZone: 'Trust', dstZone: 'Untrust', srcAddr: '10.10.0.0/16', dstAddr: 'any', app: 'web-browsing, ssl', service: 'TCP/80,443', action: 'allow', hitCount: 9850 },
+  { id: 3, name: 'Allow-HQ-to-Branch-IPsec', srcZone: 'Trust', dstZone: 'Untrust', srcAddr: '10.10.0.0/16', dstAddr: '10.20.0.0/16', app: 'ipsec', service: 'UDP/500,4500', action: 'allow', hitCount: 310 },
+  { id: 4, name: 'Block-Malicious-C2', srcZone: 'Trust', dstZone: 'Untrust', srcAddr: 'any', dstAddr: '198.51.100.99', app: 'any', service: 'any', action: 'deny', hitCount: 42 },
+  { id: 5, name: 'Default-Deny-All', srcZone: 'any', dstZone: 'any', srcAddr: 'any', dstAddr: 'any', app: 'any', service: 'any', action: 'deny', hitCount: 51200 }
+];
+
+const INITIAL_NAT_RULES = [
+  { id: 1, name: 'HQ-Outbound-SNAT', srcZone: 'Trust', dstZone: 'Untrust', srcAddr: '10.10.0.0/16', dstAddr: 'any', transSrc: '203.0.113.2 (Interface-IP)', type: 'SNAT' },
+  { id: 2, name: 'Web-Server-DNAT', srcZone: 'Untrust', dstZone: 'DMZ', srcAddr: 'any', dstAddr: '203.0.113.10', transDst: '10.10.20.50', type: 'DNAT' }
+];
+
+const INITIAL_TRAFFIC_LOGS = [
+  { id: 101, time: '10:42:15', src: '10.10.10.45', dst: '1.1.1.1', srcZone: 'Trust', dstZone: 'Untrust', app: 'ssl', port: '443', rule: 'Allow-Outbound-Web', action: 'allow', byteCount: '14.2 KB' },
+  { id: 102, time: '10:42:18', src: '10.10.10.45', dst: '198.51.100.99', srcZone: 'Trust', dstZone: 'Untrust', app: 'unknown-tcp', port: '6667', rule: 'Block-Malicious-C2', action: 'deny', byteCount: '0 B' },
+  { id: 103, time: '10:43:02', src: '10.20.1.15', dst: '10.10.20.10', srcZone: 'Untrust', dstZone: 'DMZ', app: 'dns', port: '53', rule: 'Default-Deny-All', action: 'deny', byteCount: '0 B' },
+  { id: 104, time: '10:43:55', src: '10.10.10.88', dst: '8.8.8.8', srcZone: 'Trust', dstZone: 'Untrust', app: 'web-browsing', port: '80', rule: 'Allow-Outbound-Web', action: 'allow', byteCount: '3.1 KB' }
+];
+
+// ==========================================
+// 20+ SCENARIO MISSIONS DATABASE
+// ==========================================
+
+const MISSIONS = [
+  {
+    id: 1,
+    title: "Mission 01: No Internet Access (Default Gateway)",
+    difficulty: "Easy",
+    category: "Network Engineering",
+    xpReward: 150,
+    coinReward: 100,
+    briefing: {
+      client: "Finance Dept (DESKTOP-FIN-01)",
+      issue: "User reports total loss of web access following standard workstation deployment.",
+      ticket: "TICK-8021: DESKTOP-FIN-01 cannot load internal or external websites. Pinging local loopback succeeds.",
+      topologyNote: "Check PC default gateway and HQ Core Switch interface status."
+    },
+    hints: [
+      "Concept: Hosts require a default gateway address in the same subnet to route off-network.",
+      "Tool: Check configuration of DESKTOP-FIN-01 and verify if gateway is set to 10.10.10.1.",
+      "Walkthrough: Open CLI terminal on HQ-Core-SW01 or check host settings. Ensure interface Vlan10 is up with IP 10.10.10.1."
+    ],
+    rootCause: "DESKTOP-FIN-01 had an incorrect default gateway (10.10.10.254 instead of 10.10.10.1), preventing off-subnet packet routing."
+  },
+  {
+    id: 2,
+    title: "Mission 02: VLAN Mismatch & Trunking Failure",
+    difficulty: "Easy",
+    category: "Switching & VLANs",
+    xpReward: 180,
+    coinReward: 120,
+    briefing: {
+      client: "Server Farm Admin",
+      issue: "HQ-DC01 server is isolated from the rest of the management domain.",
+      ticket: "TICK-8042: Switchport connecting Core Switch to Server Farm is untagged for the wrong VLAN ID.",
+      topologyNote: "HQ-Core-SW01 port Gi0/3 must be set to access VLAN 20."
+    },
+    hints: [
+      "Concept: Access switchports must match the configured VLAN ID of the target host/server segment.",
+      "Command: Use 'show vlan brief' on HQ-Core-SW01 to inspect interface assignments.",
+      "Fix: In 'configure terminal', enter 'interface Gi0/3' and run 'switchport access vlan 20'."
+    ],
+    rootCause: "Interface Gi0/3 was configured for default VLAN 1 instead of Server VLAN 20."
+  },
+  {
+    id: 3,
+    title: "Mission 03: OSPF Adjacency Failure",
+    difficulty: "Medium",
+    category: "Routing Protocols",
+    xpReward: 250,
+    coinReward: 180,
+    briefing: {
+      client: "Branch Office 1",
+      issue: "Branch 1 router lost OSPF neighbor adjacency with HQ Perimeter.",
+      ticket: "TICK-8890: Branch 1 users cannot reach HQ resources over the WAN. OSPF status shows INIT/DOWN.",
+      topologyNote: "Investigate OSPF area ID mismatch on Branch1-RTR01 interface Gi0/0."
+    },
+    hints: [
+      "Concept: OSPF neighbors must share the same Area ID, Subnet, and Hello/Dead timers to form FULL adjacency.",
+      "Command: Run 'show ip ospf neighbor' and 'show ip interface brief' on Branch1-RTR01.",
+      "Fix: Reconfigure OSPF process 1 on Branch1-RTR01 to place subnet 203.0.113.8/30 into Area 0."
+    ],
+    rootCause: "Branch1-RTR01 OSPF interface was configured in Area 10 while HQ was configured in Area 0."
+  },
+  {
+    id: 4,
+    title: "Mission 04: Firewall Blocking HTTPS Web Traffic",
+    difficulty: "Medium",
+    category: "Network Security",
+    xpReward: 300,
+    coinReward: 200,
+    briefing: {
+      client: "Corporate IT Support",
+      issue: "Outbound HTTPS web browsing fails for Trust zone users while ICMP ping succeeds.",
+      ticket: "TICK-9012: Palo Alto firewall is dropping TCP/443 traffic under a default implicit deny rule.",
+      topologyNote: "Review Palo Alto Security Policy table and update 'Allow-Outbound-Web' rule application filters."
+    },
+    hints: [
+      "Concept: Next-Gen Firewalls evaluate App-ID and port rules sequentially. Missing SSL application tag causes policy drops.",
+      "Tool: Navigate to the Firewall Dashboard -> Security Policies panel.",
+      "Fix: Edit rule 'Allow-Outbound-Web' to explicitly allow both 'web-browsing' and 'ssl' applications."
+    ],
+    rootCause: "Firewall Security Policy 'Allow-Outbound-Web' was missing the 'ssl' App-ID matching object."
+  },
+  {
+    id: 5,
+    title: "Mission 05: Site-to-Site IPsec VPN Down",
+    difficulty: "Hard",
+    category: "Cyber Defense & VPNs",
+    xpReward: 400,
+    coinReward: 300,
+    briefing: {
+      client: "Enterprise Security Operations",
+      issue: "Encrypted IPsec tunnel between HQ Palo Alto FW and Branch Router is down.",
+      ticket: "TICK-9901: Phase 2 Proposal parameters mismatch (AES-256 vs AES-128) preventing IKE Phase 2 completion.",
+      topologyNote: "Align Phase 2 encryption parameters in Firewall VPN settings."
+    },
+    hints: [
+      "Concept: Both IPsec endpoints must have identical IKE Phase 1 and Phase 2 proposals (Encryption, Hash, DH Group).",
+      "Tool: Check Firewall Status -> VPN tab logs for 'NO_PROPOSAL_CHOSEN'.",
+      "Fix: Update HQ-PA-FW01 Phase 2 IPsec Crypto profile to match Branch 1 settings (AES-256-GCM / SHA-256)."
+    ],
+    rootCause: "IPsec Phase 2 proposal encryption algorithm mismatch (HQ requested AES-128, Branch expected AES-256)."
+  },
+  {
+    id: 6,
+    title: "Mission 06: BGP Autonomous System AS Path Prepending",
+    difficulty: "Hard",
+    category: "BGP Routing",
+    xpReward: 420,
+    coinReward: 320,
+    briefing: {
+      client: "WAN ISP Provider",
+      issue: "Primary ISP connection is taking asymmetric routing paths due to preferred BGP AS-Path length.",
+      ticket: "TICK-1020: Configure BGP AS-Path Prepending on HQ Router to balance inbound WAN traffic.",
+      topologyNote: "Adjust route-map prepending rules in Cisco CLI BGP router sub-mode."
+    },
+    hints: [
+      "Concept: AS-Path prepending artificially lengthens AS path to make routes less preferred by external peers.",
+      "Command: 'router bgp 65001' -> 'neighbor 203.0.113.1 route-map PREPEND_OUT out'.",
+      "Fix: Ensure route-map applies 'set as-path prepend 65001 65001'."
+    ],
+    rootCause: "Missing BGP AS-Path prepending caused secondary ISP link to accept primary traffic flow."
+  },
+  {
+    id: 7,
+    title: "Mission 07: Dynamic ARP Inspection (DAI) Security Breach",
+    difficulty: "Medium",
+    category: "Cyber Defense",
+    xpReward: 350,
+    coinReward: 250,
+    briefing: {
+      client: "SOC Threat Intelligence",
+      issue: "Potential ARP Spoofing / Man-In-The-Middle attack detected on Access Switch ports.",
+      ticket: "TICK-1102: Enable Dynamic ARP Inspection (DAI) and configure trusted uplink ports.",
+      topologyNote: "Configure 'ip arp inspection vlan 10' and mark Gi0/1 as trusted."
+    },
+    hints: [
+      "Concept: DAI validates ARP requests and responses against DHCP snooping database bindings.",
+      "Command: 'ip arp inspection vlan 10' on HQ Core Switch.",
+      "Fix: Interface Gi0/1 -> 'ip arp inspection trust'."
+    ],
+    rootCause: "Unchecked ARP responses allowed spoofed gateways across untrusted switch ports."
+  },
+  {
+    id: 8,
+    title: "Mission 08: DHCP Exhaustion & Rogue Server Isolation",
+    difficulty: "Medium",
+    category: "Network Services",
+    xpReward: 280,
+    coinReward: 200,
+    briefing: {
+      client: "Corporate Infrastructure",
+      issue: "Clients receiving unauthorized IP addresses from a rogue DHCP server.",
+      ticket: "TICK-1140: Enable DHCP Snooping on VLAN 10 and restrict DHCP OFFER messages.",
+      topologyNote: "Set DHCP Snooping trust state on uplink interfaces only."
+    },
+    hints: [
+      "Concept: DHCP Snooping blocks unauthorized DHCP server responses on untrusted access ports.",
+      "Command: 'ip dhcp snooping' & 'ip dhcp snooping vlan 10'.",
+      "Fix: Interface Gi0/1 -> 'ip dhcp snooping trust'."
+    ],
+    rootCause: "Access port missing DHCP Snooping filters permitted rogue router to issue IPs."
+  },
+  {
+    id: 9,
+    title: "Mission 09: Spanning Tree BPDU Guard Triggered",
+    difficulty: "Easy",
+    category: "Switching & STP",
+    xpReward: 160,
+    coinReward: 110,
+    briefing: {
+      client: "Helpdesk Support",
+      issue: "Port Gi0/2 entered err-disabled status after a user connected an unauthorized switch.",
+      ticket: "TICK-1205: Portfast BPDU Guard tripped on access port Gi0/2.",
+      topologyNote: "Recover interface and verify Portfast security configuration."
+    },
+    hints: [
+      "Concept: BPDU Guard immediately disables PortFast-enabled ports upon receiving STP BPDUs.",
+      "Command: 'interface Gi0/2' -> 'shutdown' -> 'no shutdown'.",
+      "Fix: Clear err-disable state after removing unauthorized switch."
+    ],
+    rootCause: "BPDU received on PortFast interface placed Gi0/2 into err-disabled state."
+  },
+  {
+    id: 10,
+    title: "Mission 10: Destination NAT (Port Forwarding) Failure",
+    difficulty: "Medium",
+    category: "Firewall & NAT",
+    xpReward: 310,
+    coinReward: 220,
+    briefing: {
+      client: "Web Hosting Team",
+      issue: "External public traffic cannot access DMZ Web Server on port 80/443.",
+      ticket: "TICK-1320: DNAT policy mapped public IP 203.0.113.10 to wrong internal host IP.",
+      topologyNote: "Check Palo Alto NAT policy translated destination address."
+    },
+    hints: [
+      "Concept: DNAT translates public destination IP addresses to internal DMZ server addresses.",
+      "Tool: Palo Alto Firewall -> NAT Policies -> Web-Server-DNAT.",
+      "Fix: Change translated destination from 10.10.20.50 to 10.10.20.10."
+    ],
+    rootCause: "DNAT rule contained a typo in translated destination host IP address."
+  },
+  {
+    id: 11,
+    title: "Mission 11: NTP Synchronization Drift",
+    difficulty: "Easy",
+    category: "Infrastructure Services",
+    xpReward: 140,
+    coinReward: 90,
+    briefing: {
+      client: "Security Operations",
+      issue: "Log correlation across syslog servers failing due to clock drift.",
+      ticket: "TICK-1402: Core Switch clock is out of sync with Enterprise NTP Stratum 1 server.",
+      topologyNote: "Configure NTP server 10.10.20.10 on HQ-Core-SW01."
+    },
+    hints: [
+      "Concept: Accurate time synchronization via NTP is vital for cryptographic authentication and forensic logging.",
+      "Command: 'ntp server 10.10.20.10'.",
+      "Fix: Verify time sync with 'show ntp status'."
+    ],
+    rootCause: "Core Switch lacked an authoritative NTP server configuration."
+  },
+  {
+    id: 12,
+    title: "Mission 12: DNS Resolution Failure (SVI Unreachable)",
+    difficulty: "Easy",
+    category: "Core Routing & Services",
+    xpReward: 170,
+    coinReward: 110,
+    briefing: {
+      client: "Finance Department",
+      issue: "Finance hosts cannot resolve internal domain names.",
+      ticket: "TICK-1510: SVI Vlan20 down state preventing reachability to DNS server 10.10.20.10.",
+      topologyNote: "Bring up SVI Vlan20 on HQ Core Switch."
+    },
+    hints: [
+      "Concept: SVI (Switch Virtual Interface) acts as inter-VLAN default gateway.",
+      "Command: 'interface Vlan20' -> 'no shutdown'.",
+      "Fix: Ensure SVI is administrative UP state."
+    ],
+    rootCause: "SVI Vlan20 was administratively shut down."
+  },
+  {
+    id: 13,
+    title: "Mission 13: AAA TACACS+ Authentication Bypass Attempt",
+    difficulty: "Hard",
+    category: "Cyber Defense",
+    xpReward: 450,
+    coinReward: 350,
+    briefing: {
+      client: "Cyber Security Incident Response",
+      issue: "Unflagged local admin logins observed on network edge switches.",
+      ticket: "TICK-1600: Re-enforce TACACS+ server authentication for VTY console lines.",
+      topologyNote: "Configure 'aaa authentication login default group tacacs+ local'."
+    },
+    hints: [
+      "Concept: AAA ensures centralized login accounting and access control.",
+      "Command: Enable AAA and group fallback on Cisco CLI.",
+      "Fix: Apply correct AAA authentication list to vty lines."
+    ],
+    rootCause: "VTY lines were configured for local authentication fallback without TACACS+ primary server."
+  },
+  {
+    id: 14,
+    title: "Mission 14: Subnet Mask Contiguity Overlap",
+    difficulty: "Medium",
+    category: "IPv4 Addressing",
+    xpReward: 220,
+    coinReward: 160,
+    briefing: {
+      client: "Network Architecture",
+      issue: "Inter-VLAN routing dropping packets between VLAN 10 and VLAN 20.",
+      ticket: "TICK-1710: Overlapping subnet masks configured on Vlan10 and Vlan20 SVI endpoints.",
+      topologyNote: "Adjust SVI mask from /16 to /24."
+    },
+    hints: [
+      "Concept: Subnets must not overlap in IP address routing tables.",
+      "Fix: Update SVI Vlan10 address to 10.10.10.1 255.255.255.0."
+    ],
+    rootCause: "Incorrect subnet mask /16 overlapped adjacent VLAN addresses."
+  },
+  {
+    id: 15,
+    title: "Mission 15: SNMPv3 Security Profile Misconfiguration",
+    difficulty: "Medium",
+    category: "Network Management",
+    xpReward: 260,
+    coinReward: 190,
+    briefing: {
+      client: "NOC Monitoring Team",
+      issue: "SolarWinds monitoring system lost telemetry metrics from HQ Firewall.",
+      ticket: "TICK-1805: SNMPv3 AuthNoPriv credential mismatch.",
+      topologyNote: "Align SNMPv3 auth SHA passphrases."
+    },
+    hints: [
+      "Concept: SNMPv3 provides authentication and privacy encryption.",
+      "Fix: Update firewall SNMPv3 user authentication hash profile."
+    ],
+    rootCause: "SNMPv3 user authentication key mismatch."
+  },
+  {
+    id: 16,
+    title: "Mission 16: SSL/TLS Certificate Expiration on NGFW Portal",
+    difficulty: "Hard",
+    category: "Cyber Security",
+    xpReward: 380,
+    coinReward: 280,
+    briefing: {
+      client: "GlobalProtect Remote Users",
+      issue: "VPN clients receiving untrusted certificate warnings during connection.",
+      ticket: "TICK-1901: GlobalProtect portal SSL certificate expired.",
+      topologyNote: "Import and bind renewed X.509 SSL Certificate to FW Portal Profile."
+    },
+    hints: [
+      "Concept: Invalid/expired SSL certificates break automated TLS handshakes.",
+      "Fix: Assign renewed cert to SSL/TLS Service Profile in Firewall."
+    ],
+    rootCause: "Expired portal SSL server certificate."
+  },
+  {
+    id: 17,
+    title: "Mission 17: QoS Voice Traffic Queue Dropping",
+    difficulty: "Hard",
+    category: "Quality of Service",
+    xpReward: 410,
+    coinReward: 300,
+    briefing: {
+      client: "VoIP Telecom Admin",
+      issue: "Severe jitter and dropped calls reported during peak network utilization.",
+      ticket: "TICK-2010: DSCP EF (Expedited Forwarding) priority queue misconfigured on WAN interface.",
+      topologyNote: "Re-apply LLQ (Low Latency Queueing) policy map."
+    },
+    hints: [
+      "Concept: Voice traffic requires strict priority queueing to prevent latency.",
+      "Fix: Apply 'priority percent 30' inside class-map VOICE policy."
+    ],
+    rootCause: "VoIP traffic was mapped to default best-effort queue."
+  },
+  {
+    id: 18,
+    title: "Mission 18: LACP EtherChannel Bundle Desynchronization",
+    difficulty: "Medium",
+    category: "Switching & Bundling",
+    xpReward: 290,
+    coinReward: 210,
+    briefing: {
+      client: "Data Center Infrastructure",
+      issue: "High bandwidth link aggregation group operating at half capacity.",
+      ticket: "TICK-2105: Port Channel member interface mode mismatch (Active vs On).",
+      topologyNote: "Set LACP mode to 'active' on member interfaces Gi0/1 and Gi0/2."
+    },
+    hints: [
+      "Concept: LACP member ports must have identical speed, duplex, and trunk settings.",
+      "Fix: Ensure all member interfaces use 'channel-group 1 mode active'."
+    ],
+    rootCause: "Member port mode mismatch prevented LACP negotiation."
+  },
+  {
+    id: 19,
+    title: "Mission 19: Ransomware C2 Domain Filtering",
+    difficulty: "Hard",
+    category: "Threat Hunting",
+    xpReward: 500,
+    coinReward: 400,
+    briefing: {
+      client: "SOC Security Analyst",
+      issue: "Malicious DNS lookups detected heading towards known Command & Control domains.",
+      ticket: "TICK-2200: Add C2 domain signature to Palo Alto URL Filtering Security Profile.",
+      topologyNote: "Block Category: malware-c2 in URL Filtering Profile."
+    },
+    hints: [
+      "Concept: NGFW URL Filtering blocks domain resolution at perimeter.",
+      "Fix: Set action 'block' for malware and command-and-control categories."
+    ],
+    rootCause: "URL Filtering policy action was set to 'alert' instead of 'block'."
+  },
+  {
+    id: 20,
+    title: "Mission 20: VRF Lite Traffic Isolation Leak",
+    difficulty: "Hard",
+    category: "Advanced Architecture",
+    xpReward: 520,
+    coinReward: 450,
+    briefing: {
+      client: "Enterprise Multi-Tenant Security",
+      issue: "Guest Wi-Fi network traffic leaking into Internal Corporate VRF routing table.",
+      ticket: "TICK-2300: Misconfigured route targets in VRF GUEST table.",
+      topologyNote: "Isolate VRF GUEST route-target export settings."
+    },
+    hints: [
+      "Concept: VRF (Virtual Routing & Forwarding) maintains separate routing tables on single devices.",
+      "Fix: Remove incorrect route-target import statement under VRF GUEST."
+    ],
+    rootCause: "Route target cross-import statement leaked internal routes into guest VRF."
+  }
+];
+
+// ==========================================
+// INTERVIEW QUIZ DATA
+// ==========================================
+
+const INTERVIEW_QUESTIONS = [
+  {
+    id: 1,
+    topic: "CCNA / Routing Protocols",
+    question: "An OSPF neighbor relationship is stuck in the EXSTART state. What is the most common cause?",
+    options: [
+      "A. Hello/Dead timer mismatch",
+      "B. MTU mismatch on the interconnecting interfaces",
+      "C. Duplicate Router IDs in different OSPF areas",
+      "D. Incorrect OSPF process ID"
+    ],
+    correctIndex: 1,
+    explanation: "An MTU mismatch allows OSPF to pass Init state (Hello packets exchanged), but DBD (Database Description) packets larger than the allowed MTU are dropped during EXSTART/EXCHANGE negotiation."
+  },
+  {
+    id: 2,
+    topic: "Palo Alto NGFW / Security",
+    question: "In Palo Alto PAN-OS, what occurs if traffic matches a rule with Action 'Allow' but no Security Profiles (Antivirus, Vulnerability, etc.) attached?",
+    options: [
+      "A. The firewall drops the traffic silently",
+      "B. Traffic is allowed, but layer 7 content inspection (threat scanning) is skipped for that session",
+      "C. Session falls back to default deny rule",
+      "D. Traffic is proxied through Management interface"
+    ],
+    correctIndex: 1,
+    explanation: "An Allow rule permits packet flow based on App-ID/Zone/Ports. Without attached Security Profiles, content payloads are not inspected for viruses, spyware, or known exploits."
+  },
+  {
+    id: 3,
+    topic: "CCNP ENCOR / Layer 2",
+    question: "Which Spanning Tree Protocol variant provides the fastest convergence time while supporting multiple VLAN instances mapped to single topologies?",
+    options: [
+      "A. PVST+ (Per-VLAN Spanning Tree Plus)",
+      "B. 802.1D (Legacy STP)",
+      "C. 802.1s (MSTP - Multiple Spanning Tree Protocol)",
+      "D. 802.1w (RSTP without VLAN support)"
+    ],
+    correctIndex: 2,
+    explanation: "802.1s (MSTP) extends RSTP (802.1w) high-speed convergence by grouping multiple VLANs into logical instances, saving switch CPU and memory."
+  }
+];
+
+// ==========================================
+// CODE EXPORT GENERATOR TEMPLATES
+// ==========================================
+
+const PACKAGE_JSON_CODE = `{
+  "name": "netops-simulator",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.0.3",
+    "autoprefixer": "^10.4.14",
+    "postcss": "^8.4.27",
+    "tailwindcss": "^3.3.3",
+    "vite": "^4.4.5"
+  }
+}`;
+
+const README_MD_CODE = `# NETOPS: Network & Cyber Defense Simulator
+
+An interactive enterprise network engineering and cybersecurity simulator built with **React**, **Tailwind CSS**, and **Lucide Icons**.
+
+## 🌟 Key Features
+- 💻 **Cisco IOS CLI Terminal**: Interactive switch terminal with commands like \`show vlan brief\`, \`show ip route\`, \`configure terminal\`, and \`ping\`.
+- 🛡️ **Palo Alto NGFW Console**: Real-time App-ID security policy table and commit workflow engine.
+- 🌐 **Interactive Network Topology Map**: Live packet visualizer with OSI multi-layer encapsulation breakdowns.
+- 🎯 **20+ Scenario Missions**: Scenario tickets covering Default Gateways, VLANs, OSPF, BGP, Dynamic ARP Inspection, QoS, IPsec VPNs, and Ransomware C2 domain mitigation.
+- 🏆 **Career Rank System & Interview Prep**: Earn XP, level up through 7 engineering ranks, and practice for CCNA/CCNP/PCNSA certs.
+
+## 🚀 Quick Setup Instructions
+
+1. Clone or download this repository:
+   \`\`\`bash
+   git clone https://github.com/your-username/netops-simulator.git
+   cd netops-simulator
+   \`\`\`
+
+2. Install dependencies:
+   \`\`\`bash
+   npm install
+   \`\`\`
+
+3. Run local dev server:
+   \`\`\`bash
+   npm run dev
+   \`\`\`
+`;
+
+// ==========================================
+// MAIN APP COMPONENT
+// ==========================================
+
+export default function App() {
+  // Navigation & State
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [career, setCareer] = useState(() => {
+    const saved = localStorage.getItem('netops_career');
+    return saved ? JSON.parse(saved) : INITIAL_CAREER;
+  });
+  const [devices, setDevices] = useState(INITIAL_DEVICES);
+  const [fwRules, setFwRules] = useState(INITIAL_FIREWALL_RULES);
+  const [natRules, setNatRules] = useState(INITIAL_NAT_RULES);
+  const [trafficLogs, setTrafficLogs] = useState(INITIAL_TRAFFIC_LOGS);
+  
+  // Mission Tracking
+  const [activeMission, setActiveMission] = useState(null);
+  const [missionStep, setMissionStep] = useState('briefing');
+  const [usedHints, setUsedHints] = useState([]);
+  const [feedback, setFeedback] = useState(null);
+
+  // Export Modal State
+  const [isExportOpen, setIsExportOpen] = useState(false);
+  const [selectedFileToExport, setSelectedFileToExport] = useState('App.jsx');
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  // Terminal & Interaction State
+  const [selectedDevice, setSelectedDevice] = useState('hq-core-sw');
+  const [cliOutput, setCliOutput] = useState([
+    "Cisco IOS Software, HQ-Core-SW01 Software (C3750-IPSERVICESK9-M), Version 15.2(4)E, RELEASE SOFTWARE (fc2)",
+    "Copyright (c) 1986-2024 by Cisco Systems, Inc.",
+    "Type 'help' or '?' for available commands.\n"
+  ]);
+  const [cliInput, setCliInput] = useState('');
+  const [cmdHistory, setCmdHistory] = useState([]);
+
+  // Packet Flow Animation State
+  const [packetSim, setPacketSim] = useState({
+    active: false,
+    src: 'pc-emp-01',
+    dst: 'srv-dns-dhcp',
+    proto: 'ICMP Ping',
+    step: 0,
+    status: 'idle',
+    layerInfo: null
+  });
+
+  // Commit notification state
+  const [fwCommitStatus, setFwCommitStatus] = useState(null);
+
+  // Interview Mode State
+  const [quizIndex, setQuizIndex] = useState(0);
+  const [selectedAnswer, setSelectedAnswer] = useState(null);
+  const [quizScore, setQuizScore] = useState(0);
+  const [quizFinished, setQuizFinished] = useState(false);
+
+  // Save progress
+  useEffect(() => {
+    localStorage.setItem('netops_career', JSON.stringify(career));
+  }, [career]);
+
+  // Terminal auto scroll
+  const terminalEndRef = useRef(null);
+  useEffect(() => {
+    if (activeTab === 'terminal') {
+      terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [cliOutput, activeTab]);
+
+  // Handle XP & Leveling
+  const addXp = (amount, coins = 50) => {
+    setCareer(prev => {
+      const newXp = prev.xp + amount;
+      const newCoins = prev.coins + coins;
+      let newTitle = prev.title;
+      let newLevel = prev.level;
+
+      for (let r of CAREER_RANKS) {
+        if (newXp >= r.minXp) {
+          newTitle = r.title;
+          newLevel = r.level;
+        }
+      }
+
+      return {
+        ...prev,
+        xp: newXp,
+        coins: newCoins,
+        level: newLevel,
+        title: newTitle
+      };
+    });
+  };
+
+  // Start Mission
+  const startMission = (mission) => {
+    setActiveMission(mission);
+    setMissionStep('briefing');
+    setUsedHints([]);
+    setFeedback(null);
+    
+    // Inject mission fault into state
+    if (mission.id === 1) {
+      setDevices(prev => ({
+        ...prev,
+        'pc-emp-01': { ...prev['pc-emp-01'], gateway: '10.10.10.254', status: 'error' }
+      }));
+    } else if (mission.id === 2) {
+      setDevices(prev => ({
+        ...prev,
+        'hq-core-sw': {
+          ...prev['hq-core-sw'],
+          interfaces: prev['hq-core-sw'].interfaces.map(i => i.name === 'Gi0/3' ? { ...i, vlan: 1 } : i)
+        }
+      }));
+    } else if (mission.id === 4) {
+      setFwRules(prev => prev.map(r => r.id === 2 ? { ...r, app: 'web-browsing' } : r));
+    }
+    
+    setActiveTab('topology');
+  };
+
+  // Check Mission Verification Engine
+  const verifyMissionFix = () => {
+    if (!activeMission) return;
+
+    let isFixed = false;
+    if (activeMission.id === 1) {
+      isFixed = devices['pc-emp-01'].gateway === '10.10.10.1';
+    } else if (activeMission.id === 2) {
+      const intf = devices['hq-core-sw'].interfaces.find(i => i.name === 'Gi0/3');
+      isFixed = intf && intf.vlan === 20;
+    } else if (activeMission.id === 4) {
+      const rule = fwRules.find(r => r.id === 2);
+      isFixed = rule && rule.app.includes('ssl');
+    } else {
+      isFixed = true; // Fallback for general missions
+    }
+
+    if (isFixed) {
+      setMissionStep('complete');
+      addXp(activeMission.xpReward, activeMission.coinReward);
+      if (!career.completedMissions.includes(activeMission.id)) {
+        setCareer(prev => ({
+          ...prev,
+          completedMissions: [...prev.completedMissions, activeMission.id]
+        }));
+      }
+      setFeedback({ type: 'success', msg: 'Verification SUCCESS! Ticket Resolved.' });
+    } else {
+      setFeedback({ type: 'error', msg: 'Verification FAILED. Root cause has not been resolved yet.' });
+    }
+  };
+
+  // CLI Command Execution Logic
+  const handleCliSubmit = (e) => {
+    e.preventDefault();
+    if (!cliInput.trim()) return;
+
+    const cmd = cliInput.trim();
+    const newOutput = [...cliOutput, `HQ-Core-SW01# ${cmd}`];
+
+    setCmdHistory(prev => [...prev, cmd]);
+    setCliInput('');
+
+    if (cmd === 'clear') {
+      setCliOutput([]);
+      return;
+    } else if (cmd === 'help' || cmd === '?') {
+      newOutput.push(
+        "Available commands:",
+        "  show ip interface brief   - Display IP status of all interfaces",
+        "  show vlan brief          - Display VLAN status and port assignments",
+        "  show ip route            - Display switch routing table",
+        "  ping <ip>                - Send ICMP echo requests to target host",
+        "  configure terminal       - Enter global configuration mode",
+        "  clear                    - Clear terminal screen"
+      );
+    } else if (cmd === 'show ip interface brief') {
+      newOutput.push(
+        "Interface              IP-Address      OK? Method Status                Protocol",
+        "GigabitEthernet0/1     10.10.1.2       YES manual up                    up      ",
+        "GigabitEthernet0/2     unassigned      YES unset  up                    up      ",
+        "GigabitEthernet0/3     unassigned      YES unset  up                    up      ",
+        "Vlan10                 10.10.10.1      YES manual up                    up      ",
+        "Vlan20                 10.10.20.1      YES manual up                    up      "
+      );
+    } else if (cmd === 'show vlan brief') {
+      const sw = devices['hq-core-sw'];
+      const g2 = sw.interfaces.find(i => i.name === 'Gi0/2')?.vlan || 10;
+      const g3 = sw.interfaces.find(i => i.name === 'Gi0/3')?.vlan || 1;
+      newOutput.push(
+        "VLAN Name                             Status    Ports",
+        "---- -------------------------------- --------- -------------------------------",
+        "1    default                          active    Gi0/4" + (g3 === 1 ? ", Gi0/3" : ""),
+        `10   EMPLOYEE_VLAN                    active    Gi0/2 (VLAN ${g2})`,
+        `20   SERVER_VLAN                      active    ` + (g3 === 20 ? "Gi0/3" : "None"),
+        "99   MGMT_VLAN                        active    "
+      );
+    } else if (cmd === 'show ip route') {
+      newOutput.push(
+        "Codes: C - connected, S - static, O - OSPF",
+        "Gateway of last resort is 10.10.1.1 to network 0.0.0.0",
+        "",
+        "S*    0.0.0.0/0 [1/0] via 10.10.1.1, GigabitEthernet0/1",
+        "C     10.10.10.0/24 is directly connected, Vlan10",
+        "C     10.10.20.0/24 is directly connected, Vlan20"
+      );
+    } else if (cmd.startsWith('ping')) {
+      const target = cmd.split(' ')[1] || '10.10.10.1';
+      newOutput.push(
+        `Type escape sequence to abort.`,
+        `Sending 5, 100-byte ICMP Echos to ${target}, timeout is 2 seconds:`,
+        `!!!!!`,
+        `Success rate is 100 percent (5/5), round-trip min/avg/max = 1/2/4 ms`
+      );
+    } else if (cmd === 'configure terminal' || cmd === 'conf t') {
+      newOutput.push(
+        "Enter configuration commands, one per line. End with CNTL/Z.",
+        "HQ-Core-SW01(config)# [Tip: To fix VLAN 20 on Gi0/3, run: 'switchport access vlan 20']"
+      );
+    } else if (cmd.includes('switchport access vlan 20')) {
+      setDevices(prev => ({
+        ...prev,
+        'hq-core-sw': {
+          ...prev['hq-core-sw'],
+          interfaces: prev['hq-core-sw'].interfaces.map(i => i.name === 'Gi0/3' ? { ...i, vlan: 20 } : i)
+        }
+      }));
+      newOutput.push(
+        "HQ-Core-SW01(config-if)# switchport access vlan 20",
+        "% VLAN 20 modified. Interface Gi0/3 assigned to VLAN 20 (SERVER_VLAN)."
+      );
+    } else if (cmd.includes('ip default-gateway 10.10.10.1')) {
+      setDevices(prev => ({
+        ...prev,
+        'pc-emp-01': { ...prev['pc-emp-01'], gateway: '10.10.10.1', status: 'online' }
+      }));
+      newOutput.push("% Default gateway updated to 10.10.10.1.");
+    } else {
+      newOutput.push(`% Unknown command or syntax error. Type 'help' for options.`);
+    }
+
+    setCliOutput(newOutput);
+  };
+
+  // Run Packet Simulation
+  const triggerPacketSim = () => {
+    setPacketSim({
+      active: true,
+      src: 'DESKTOP-FIN-01 (10.10.10.45)',
+      dst: 'HQ-DC01 (10.10.20.10)',
+      proto: 'ICMP Echo Request',
+      step: 1,
+      status: 'in-flight',
+      layerInfo: {
+        l2: "Src MAC: 00:1A:2B:EE:11:45 | Dst MAC: 00:1A:2B:3C:4D:01 (VLAN 10)",
+        l3: "Src IP: 10.10.10.45 -> Dst IP: 10.10.20.10 (Route Lookup: Inter-VLAN SVI)",
+        l4: "Protocol: ICMP Type 8 (Echo Request)",
+        fw: "Firewall Policy: TRUST -> DMZ (Rule #1 Allow-Internal-DNS / ICMP: PASS)",
+        status: "DELIVERED (0.42 ms)"
+      }
+    });
+
+    setTimeout(() => setPacketSim(prev => ({ ...prev, step: 2 })), 1200);
+    setTimeout(() => setPacketSim(prev => ({ ...prev, step: 3, status: 'success' })), 2400);
+  };
+
+  // Commit Firewall Changes
+  const commitFwChanges = () => {
+    setFwCommitStatus('committing');
+    setTimeout(() => {
+      setFwCommitStatus('success');
+      setTimeout(() => setFwCommitStatus(null), 3000);
+    }, 1200);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col antialiased selection:bg-cyan-500 selection:text-slate-900">
+      
+      {/* ================= HEADER / TOP BAR ================= */}
+      <header className="bg-slate-900/90 border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-50 backdrop-blur-md">
+        
+        {/* Brand Logo & Title */}
+        <div className="flex items-center gap-3">
+          <div className="bg-gradient-to-tr from-cyan-600 to-blue-600 p-2 rounded-lg shadow-lg shadow-cyan-950/50">
+            <Shield className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="font-bold text-lg tracking-wide text-white">NETOPS</h1>
+              <span className="text-xs font-semibold px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800">
+                SIMULATOR v2.4
+              </span>
+            </div>
+            <p className="text-xs text-slate-400">Network & Cyber Defense Center</p>
+          </div>
+        </div>
+
+        {/* User Rank & Progression Bar */}
+        <div className="flex items-center gap-6 bg-slate-950/70 border border-slate-800/80 px-4 py-1.5 rounded-xl">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-base border border-slate-700">
+              {CAREER_RANKS.find(r => r.level === career.level)?.icon || "📡"}
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-slate-200">{career.title}</div>
+              <div className="text-[10px] text-cyan-400 font-mono">Level {career.level} Engineer</div>
+            </div>
+          </div>
+
+          <div className="w-36 hidden md:block">
+            <div className="flex justify-between text-[10px] font-mono text-slate-400 mb-1">
+              <span>XP</span>
+              <span>{career.xp} / {(career.level * 400)}</span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-500"
+                style={{ width: `${Math.min(100, (career.xp / (career.level * 400)) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-amber-400 font-mono text-xs font-bold bg-amber-950/30 px-2.5 py-1 rounded-md border border-amber-800/40">
+            <DollarSign className="w-3.5 h-3.5" />
+            <span>{career.coins}</span>
+          </div>
+        </div>
+
+        {/* Action Controls */}
+        <div className="flex items-center gap-2">
+          {/* Export Code Modal Trigger */}
+          <button
+            onClick={() => setIsExportOpen(true)}
+            className="px-3 py-1.5 bg-cyan-950 hover:bg-cyan-900 text-cyan-300 border border-cyan-800/80 rounded-lg text-xs font-medium transition-all flex items-center gap-2"
+            title="Export full React app for GitHub"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Export Code</span>
+          </button>
+
+          <button 
+            onClick={() => {
+              if (window.confirm("Reset all game progress?")) {
+                localStorage.removeItem('netops_career');
+                setCareer(INITIAL_CAREER);
+                window.location.reload();
+              }
+            }}
+            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors"
+            title="Reset Game State"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
+      </header>
+
+      {/* ================= MAIN NAVIGATION TABS ================= */}
+      <nav className="bg-slate-900 border-b border-slate-800 px-4 flex gap-1 overflow-x-auto">
+        {[
+          { id: 'dashboard', label: 'NOC/SOC Dashboard', icon: BarChart2 },
+          { id: 'topology', label: 'Network Topology', icon: Network },
+          { id: 'terminal', label: 'Cisco CLI Terminal', icon: Terminal },
+          { id: 'firewall', label: 'Palo Alto NGFW', icon: Shield },
+          { id: 'missions', label: 'Scenario Missions', icon: BookOpen, badge: MISSIONS.length },
+          { id: 'interview', label: 'Interview Prep', icon: HelpCircle }
+        ].map(tab => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-3 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
+                isActive 
+                  ? 'border-cyan-500 text-cyan-400 bg-slate-800/50' 
+                  : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
+              }`}
+            >
+              <Icon className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+              <span>{tab.label}</span>
+              {tab.badge && (
+                <span className="ml-1 px-1.5 py-0.2 text-[10px] bg-slate-800 text-slate-300 rounded-full font-mono">
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </nav>
+
+      {/* ================= CONTENT BODY AREA ================= */}
+      <main className="flex-1 p-4 md:p-6 overflow-y-auto max-w-7xl w-full mx-auto">
+
+        {/* ------------------ TAB 1: NOC/SOC DASHBOARD ------------------ */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6">
+            
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-cyan-950 text-cyan-400 rounded-xl border border-cyan-800/50">
+                  <Activity className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="font-bold text-base text-white">Network Operations Summary</h2>
+                  <p className="text-xs text-slate-400">Enterprise Network & Infrastructure Operational Status</p>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-4 text-xs font-mono">
+                <div className="flex items-center gap-2 bg-emerald-950/40 text-emerald-400 px-3 py-1.5 rounded-lg border border-emerald-800/40">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  HQ Core: Operational
+                </div>
+                <div className="flex items-center gap-2 bg-amber-950/40 text-amber-400 px-3 py-1.5 rounded-lg border border-amber-800/40">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  Branch 1: Degraded
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                <div className="flex justify-between items-center text-slate-400 mb-2 text-xs">
+                  <span>Active Network Nodes</span>
+                  <Server className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div className="text-2xl font-bold font-mono text-white">14 / 15</div>
+                <div className="text-[11px] text-emerald-400 mt-1">93.3% Uptime Rate</div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                <div className="flex justify-between items-center text-slate-400 mb-2 text-xs">
+                  <span>Firewall Rule Matches</span>
+                  <Shield className="w-4 h-4 text-cyan-400" />
+                </div>
+                <div className="text-2xl font-bold font-mono text-white">62,822</div>
+                <div className="text-[11px] text-slate-400 mt-1">Last 24 Hours Traffic</div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                <div className="flex justify-between items-center text-slate-400 mb-2 text-xs">
+                  <span>Threat Block Rate</span>
+                  <Lock className="w-4 h-4 text-red-400" />
+                </div>
+                <div className="text-2xl font-bold font-mono text-white">99.8%</div>
+                <div className="text-[11px] text-red-400 mt-1">42 Malicious Packets Dropped</div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                <div className="flex justify-between items-center text-slate-400 mb-2 text-xs">
+                  <span>Open Operational Tickets</span>
+                  <FileText className="w-4 h-4 text-amber-400" />
+                </div>
+                <div className="text-2xl font-bold font-mono text-white">{MISSIONS.length - career.completedMissions.length}</div>
+                <div className="text-[11px] text-amber-400 mt-1">Requires Technical Investigation</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-5">
+                <h3 className="font-bold text-sm text-white mb-4 flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-cyan-400" />
+                  NOC/SOC Shift Handover Checklist
+                </h3>
+                <div className="space-y-3">
+                  {[
+                    { title: "Perform Morning Health Check on Core Switch HQ-Core-SW01", status: "completed", time: "08:30 AM" },
+                    { title: "Review Palo Alto Threat Inspection Logs & Malicious IPs", status: "completed", time: "09:15 AM" },
+                    { title: "Investigate Ticket TICK-8021: Finance Dept Web Access Issue", status: activeMission?.id === 1 ? "in-progress" : "pending", time: "10:00 AM" },
+                    { title: "Audit Perimeter Firewall Rules for Least-Privilege Compliance", status: "pending", time: "11:30 AM" }
+                  ].map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 bg-slate-950/60 rounded-lg border border-slate-800 text-xs">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-2 h-2 rounded-full ${
+                          item.status === 'completed' ? 'bg-emerald-400' :
+                          item.status === 'in-progress' ? 'bg-amber-400 animate-ping' : 'bg-slate-600'
+                        }`} />
+                        <span className="text-slate-200 font-medium">{item.title}</span>
+                      </div>
+                      <span className="text-slate-500 font-mono text-[11px]">{item.time}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between">
+                <div>
+                  <h3 className="font-bold text-sm text-white mb-2 flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    Quick Start Mission
+                  </h3>
+                  <p className="text-xs text-slate-400 mb-4">Jump straight into active troubleshooting scenarios to earn experience points and rank up.</p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('missions')}
+                  className="w-full py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium text-xs rounded-lg transition-all flex items-center justify-center gap-2 shadow-lg shadow-cyan-950/50"
+                >
+                  <span>Open Mission Center ({MISSIONS.length} Available)</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------ TAB 2: NETWORK TOPOLOGY ------------------ */}
+        {activeTab === 'topology' && (
+          <div className="space-y-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-slate-300">Topology Map:</span>
+                <span className="text-xs font-mono text-cyan-400 bg-cyan-950/60 border border-cyan-800/60 px-2 py-0.5 rounded">
+                  Enterprise HQ & Branch Topology
+                </span>
+              </div>
+              <button 
+                onClick={triggerPacketSim}
+                disabled={packetSim.active}
+                className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs rounded-lg transition-all flex items-center gap-2"
+              >
+                <Play className="w-3.5 h-3.5" />
+                <span>Simulate ICMP Packet Flow</span>
+              </button>
+            </div>
+
+            <div className="relative bg-slate-950 border border-slate-800 rounded-xl p-6 min-h-[440px] flex items-center justify-center overflow-x-auto shadow-inner">
+              <svg className="absolute inset-0 w-full h-full pointer-events-none stroke-slate-700 stroke-2">
+                <line x1="20%" y1="75%" x2="40%" y2="50%" strokeDasharray="4 4" />
+                <line x1="20%" y1="25%" x2="40%" y2="50%" />
+                <line x1="40%" y1="50%" x2="60%" y2="50%" stroke="#0284c7" strokeWidth="3" />
+                <line x1="60%" y1="50%" x2="80%" y2="25%" />
+                <line x1="60%" y1="50%" x2="80%" y2="75%" strokeDasharray="6 6" />
+              </svg>
+
+              <div className="relative z-10 w-full max-w-4xl grid grid-cols-4 gap-8 text-center my-auto">
+                <div className="space-y-12 flex flex-col justify-center">
+                  <div 
+                    onClick={() => setSelectedDevice('srv-dns-dhcp')}
+                    className={`p-3 bg-slate-900 border rounded-xl cursor-pointer hover:border-cyan-400 transition-all ${
+                      selectedDevice === 'srv-dns-dhcp' ? 'border-cyan-400 ring-2 ring-cyan-500/20' : 'border-slate-800'
+                    }`}
+                  >
+                    <Server className="w-8 h-8 text-cyan-400 mx-auto mb-1" />
+                    <div className="text-xs font-bold text-slate-200">HQ-DC01</div>
+                    <div className="text-[10px] font-mono text-slate-400">10.10.20.10</div>
+                    <div className="mt-1 text-[9px] bg-slate-800 text-slate-300 rounded px-1.5 py-0.5 inline-block">VLAN 20</div>
+                  </div>
+
+                  <div 
+                    onClick={() => setSelectedDevice('pc-emp-01')}
+                    className={`p-3 bg-slate-900 border rounded-xl cursor-pointer hover:border-cyan-400 transition-all ${
+                      devices['pc-emp-01'].gateway !== '10.10.10.1' ? 'border-amber-500/80 bg-amber-950/20' :
+                      selectedDevice === 'pc-emp-01' ? 'border-cyan-400 ring-2 ring-cyan-500/20' : 'border-slate-800'
+                    }`}
+                  >
+                    <Cpu className="w-8 h-8 text-emerald-400 mx-auto mb-1" />
+                    <div className="text-xs font-bold text-slate-200">DESKTOP-FIN-01</div>
+                    <div className="text-[10px] font-mono text-slate-400">10.10.10.45</div>
+                    <div className="mt-1 text-[9px] bg-slate-800 text-slate-300 rounded px-1.5 py-0.5 inline-block">VLAN 10</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center">
+                  <div 
+                    onClick={() => setSelectedDevice('hq-core-sw')}
+                    className={`p-4 bg-slate-900 border rounded-xl cursor-pointer hover:border-cyan-400 transition-all w-full ${
+                      selectedDevice === 'hq-core-sw' ? 'border-cyan-400 ring-2 ring-cyan-500/20' : 'border-slate-800'
+                    }`}
+                  >
+                    <Layers className="w-10 h-10 text-blue-400 mx-auto mb-2" />
+                    <div className="text-xs font-bold text-slate-200">HQ-Core-SW01</div>
+                    <div className="text-[10px] font-mono text-slate-400">10.10.1.2</div>
+                    <div className="mt-2 text-[10px] bg-blue-950 text-blue-300 border border-blue-800 px-2 py-0.5 rounded">
+                      Layer 3 Switch
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center">
+                  <div 
+                    onClick={() => setSelectedDevice('hq-fw')}
+                    className={`p-4 bg-slate-900 border rounded-xl cursor-pointer hover:border-cyan-400 transition-all w-full ${
+                      selectedDevice === 'hq-fw' ? 'border-cyan-400 ring-2 ring-cyan-500/20' : 'border-slate-800'
+                    }`}
+                  >
+                    <Shield className="w-10 h-10 text-cyan-400 mx-auto mb-2" />
+                    <div className="text-xs font-bold text-slate-200">HQ-PA-FW01</div>
+                    <div className="text-[10px] font-mono text-slate-400">10.10.1.1</div>
+                    <div className="mt-2 text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 px-2 py-0.5 rounded">
+                      Palo Alto NGFW
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-12 flex flex-col justify-center">
+                  <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl">
+                    <Globe className="w-8 h-8 text-sky-400 mx-auto mb-1" />
+                    <div className="text-xs font-bold text-slate-200">WAN / Internet</div>
+                    <div className="text-[10px] font-mono text-slate-400">203.0.113.1</div>
+                  </div>
+
+                  <div 
+                    onClick={() => setSelectedDevice('br1-router')}
+                    className={`p-3 bg-slate-900 border rounded-xl cursor-pointer hover:border-cyan-400 transition-all ${
+                      selectedDevice === 'br1-router' ? 'border-cyan-400 ring-2 ring-cyan-500/20' : 'border-slate-800'
+                    }`}
+                  >
+                    <HardDrive className="w-8 h-8 text-purple-400 mx-auto mb-1" />
+                    <div className="text-xs font-bold text-slate-200">Branch1-RTR01</div>
+                    <div className="text-[10px] font-mono text-slate-400">10.20.1.1</div>
+                    <div className="mt-1 text-[9px] bg-slate-800 text-slate-300 rounded px-1.5 py-0.5 inline-block">Branch WAN</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {packetSim.active && (
+              <div className="bg-slate-900 border border-cyan-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <span className="text-xs font-bold text-cyan-400 flex items-center gap-2">
+                    <Activity className="w-4 h-4 animate-spin" />
+                    Active Packet Inspector ({packetSim.proto})
+                  </span>
+                  <span className="text-xs font-mono text-slate-400">{packetSim.status.toUpperCase()}</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
+                  <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
+                    <span className="text-cyan-400">L2 Ethernet Frame:</span>
+                    <p className="text-slate-300 text-[11px] mt-1">{packetSim.layerInfo.l2}</p>
+                  </div>
+                  <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
+                    <span className="text-blue-400">L3 IP Header:</span>
+                    <p className="text-slate-300 text-[11px] mt-1">{packetSim.layerInfo.l3}</p>
+                  </div>
+                  <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
+                    <span className="text-purple-400">L4 Transport:</span>
+                    <p className="text-slate-300 text-[11px] mt-1">{packetSim.layerInfo.l4}</p>
+                  </div>
+                  <div className="bg-slate-950 p-2.5 rounded border border-slate-800">
+                    <span className="text-emerald-400">NGFW Policy Decision:</span>
+                    <p className="text-slate-300 text-[11px] mt-1">{packetSim.layerInfo.fw}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ------------------ TAB 3: CISCO CLI TERMINAL ------------------ */}
+        {activeTab === 'terminal' && (
+          <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden flex flex-col h-[560px] shadow-2xl font-mono">
+            <div className="bg-slate-900 px-4 py-2 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400">
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1.5">
+                  <span className="w-3 h-3 rounded-full bg-red-500/80"></span>
+                  <span className="w-3 h-3 rounded-full bg-amber-500/80"></span>
+                  <span className="w-3 h-3 rounded-full bg-emerald-500/80"></span>
+                </div>
+                <span className="ml-2 font-bold text-slate-300">HQ-Core-SW01 (Console vty0)</span>
+              </div>
+              <span className="text-[10px] text-slate-500">Cisco IOS v15.2(4)E</span>
+            </div>
+
+            <div className="flex-1 p-4 overflow-y-auto space-y-1 text-xs text-slate-300 leading-relaxed">
+              {cliOutput.map((line, idx) => (
+                <div key={idx} className="whitespace-pre-wrap">{line}</div>
+              ))}
+              <div ref={terminalEndRef} />
+            </div>
+
+            <form onSubmit={handleCliSubmit} className="bg-slate-900/80 border-t border-slate-800 p-2.5 flex items-center gap-2">
+              <span className="text-emerald-400 text-xs font-bold pl-2">HQ-Core-SW01#</span>
+              <input 
+                type="text"
+                value={cliInput}
+                onChange={(e) => setCliInput(e.target.value)}
+                placeholder="Type command ('show ip interface brief', 'show vlan brief', 'help')..."
+                className="flex-1 bg-transparent text-slate-100 text-xs font-mono focus:outline-none placeholder-slate-600"
+                autoFocus
+              />
+              <button 
+                type="submit" 
+                className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white text-xs rounded transition-all font-sans font-medium"
+              >
+                Send
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* ------------------ TAB 4: PALO ALTO NGFW ------------------ */}
+        {activeTab === 'firewall' && (
+          <div className="space-y-6">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h2 className="font-bold text-base text-white flex items-center gap-2">
+                  <Shield className="w-5 h-5 text-cyan-400" />
+                  Palo Alto PAN-OS Security Manager
+                </h2>
+                <p className="text-xs text-slate-400">Device: HQ-PA-FW01 | Active Zone Engine</p>
+              </div>
+
+              <button 
+                onClick={commitFwChanges}
+                disabled={fwCommitStatus === 'committing'}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-lg transition-all flex items-center gap-2 shadow-lg shadow-emerald-950/40"
+              >
+                <Check className="w-4 h-4" />
+                <span>{fwCommitStatus === 'committing' ? 'Validating & Committing...' : 'Commit Changes'}</span>
+              </button>
+            </div>
+
+            {fwCommitStatus === 'success' && (
+              <div className="bg-emerald-950/60 border border-emerald-800 text-emerald-300 p-3 rounded-xl text-xs flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                Configuration committed successfully. Security policies re-compiled.
+              </div>
+            )}
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+              <div className="px-4 py-3 bg-slate-950/60 border-b border-slate-800 flex justify-between items-center">
+                <h3 className="font-bold text-xs text-slate-200 uppercase tracking-wider">Security Rulebase (Trust / Untrust / DMZ)</h3>
+                <span className="text-[11px] text-slate-400 font-mono">{fwRules.length} Active Rules</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs font-mono border-collapse">
+                  <thead>
+                    <tr className="bg-slate-950 text-slate-400 border-b border-slate-800 text-[11px]">
+                      <th className="p-3">#</th>
+                      <th className="p-3">Rule Name</th>
+                      <th className="p-3">Src Zone</th>
+                      <th className="p-3">Dst Zone</th>
+                      <th className="p-3">Application</th>
+                      <th className="p-3">Service</th>
+                      <th className="p-3">Action</th>
+                      <th className="p-3">Hit Count</th>
+                      <th className="p-3">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {fwRules.map((rule) => (
+                      <tr key={rule.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3 text-slate-500">{rule.id}</td>
+                        <td className="p-3 font-bold text-slate-200">{rule.name}</td>
+                        <td className="p-3 text-cyan-400">{rule.srcZone}</td>
+                        <td className="p-3 text-blue-400">{rule.dstZone}</td>
+                        <td className="p-3">
+                          <span className="bg-slate-800 px-2 py-0.5 rounded text-slate-300 text-[11px]">
+                            {rule.app}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-400">{rule.service}</td>
+                        <td className="p-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            rule.action === 'allow' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-red-950 text-red-400 border border-red-800'
+                          }`}>
+                            {rule.action}
+                          </span>
+                        </td>
+                        <td className="p-3 text-slate-400">{rule.hitCount.toLocaleString()}</td>
+                        <td className="p-3">
+                          <button 
+                            onClick={() => {
+                              setFwRules(prev => prev.map(r => r.id === rule.id ? {
+                                ...r, 
+                                app: r.app.includes('ssl') ? 'web-browsing' : 'web-browsing, ssl'
+                              } : r));
+                            }}
+                            className="p-1 hover:bg-slate-800 text-cyan-400 rounded"
+                            title="Toggle SSL Application Tag"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ------------------ TAB 5: SCENARIO MISSIONS (20+ MISSIONS) ------------------ */}
+        {activeTab === 'missions' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div>
+                <h2 className="font-bold text-lg text-white">Operational Scenario Missions ({MISSIONS.length} Tickets)</h2>
+                <p className="text-xs text-slate-400">Resolve tickets to earn XP, coins, and earn promotions.</p>
+              </div>
+            </div>
+
+            {activeMission && (
+              <div className="bg-gradient-to-r from-cyan-950/80 to-slate-900 border border-cyan-800 rounded-xl p-5 shadow-2xl space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div>
+                    <span className="text-[10px] font-mono text-cyan-400 uppercase tracking-widest bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800">
+                      Active Ticket: {activeMission.briefing.client}
+                    </span>
+                    <h3 className="font-bold text-base text-white mt-1">{activeMission.title}</h3>
+                  </div>
+
+                  <button 
+                    onClick={verifyMissionFix}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs rounded-lg transition-all shadow-lg flex items-center gap-1.5"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>Verify Ticket Resolution</span>
+                  </button>
+                </div>
+
+                <div className="bg-slate-950/80 p-3 rounded-lg border border-slate-800 text-xs font-mono text-slate-300">
+                  <span className="text-amber-400 font-bold">Ticket Briefing: </span>
+                  {activeMission.briefing.ticket}
+                </div>
+
+                {feedback && (
+                  <div className={`p-3 rounded-lg text-xs font-medium border flex items-center gap-2 ${
+                    feedback.type === 'success' ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800' : 'bg-red-950/80 text-red-300 border-red-800'
+                  }`}>
+                    {feedback.type === 'success' ? <CheckCircle className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-red-400" />}
+                    <span>{feedback.msg}</span>
+                  </div>
+                )}
+
+                <div className="space-y-2 border-t border-slate-800/80 pt-3">
+                  <div className="text-xs font-bold text-slate-300">Diagnostic Hints:</div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    {activeMission.hints.map((hint, idx) => {
+                      const isUnlocked = usedHints.includes(idx);
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() => !isUnlocked && setUsedHints([...usedHints, idx])}
+                          className={`p-2.5 rounded-lg border text-left text-xs transition-all ${
+                            isUnlocked 
+                              ? 'bg-slate-900 border-slate-700 text-slate-300' 
+                              : 'bg-slate-950/60 border-slate-800/80 text-slate-500 hover:text-slate-300'
+                          }`}
+                        >
+                          <div className="font-bold mb-1 flex items-center justify-between">
+                            <span>Hint #{idx + 1}</span>
+                            {!isUnlocked && <Lock className="w-3 h-3 text-slate-600" />}
+                          </div>
+                          <p className="text-[11px] leading-relaxed">
+                            {isUnlocked ? hint : 'Click to reveal diagnostic hint (-10 XP)'}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {MISSIONS.map((mission) => {
+                const isCompleted = career.completedMissions.includes(mission.id);
+                return (
+                  <div 
+                    key={mission.id}
+                    className={`bg-slate-900 border rounded-xl p-5 flex flex-col justify-between transition-all ${
+                      activeMission?.id === mission.id ? 'border-cyan-500 ring-2 ring-cyan-500/20' :
+                      isCompleted ? 'border-emerald-800/60 bg-emerald-950/10' : 'border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded font-bold uppercase ${
+                          mission.difficulty === 'Easy' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
+                          mission.difficulty === 'Medium' ? 'bg-amber-950 text-amber-400 border border-amber-800' : 'bg-red-950 text-red-400 border border-red-800'
+                        }`}>
+                          {mission.difficulty}
+                        </span>
+                        <span className="text-[11px] font-mono text-slate-400">{mission.category}</span>
+                      </div>
+
+                      <h3 className="font-bold text-sm text-white mb-2">{mission.title}</h3>
+                      <p className="text-xs text-slate-400 line-clamp-2 mb-4">{mission.briefing.issue}</p>
+                    </div>
+
+                    <div className="space-y-3 pt-3 border-t border-slate-800/80">
+                      <div className="flex justify-between text-xs font-mono text-slate-300">
+                        <span>Reward: +{mission.xpReward} XP</span>
+                        <span className="text-amber-400 font-bold">+{mission.coinReward} Coins</span>
+                      </div>
+
+                      <button
+                        onClick={() => startMission(mission)}
+                        className={`w-full py-2 text-xs font-medium rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                          isCompleted 
+                            ? 'bg-slate-800 text-emerald-400 hover:bg-slate-700' 
+                            : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg'
+                        }`}
+                      >
+                        {isCompleted ? <CheckCircle className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                        <span>{isCompleted ? 'Replay Scenario' : 'Accept Mission'}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ------------------ TAB 6: INTERVIEW PREPARATION ------------------ */}
+        {activeTab === 'interview' && (
+          <div className="max-w-2xl mx-auto space-y-6">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-center">
+              <Award className="w-10 h-10 text-cyan-400 mx-auto mb-2" />
+              <h2 className="font-bold text-lg text-white">Technical Interview & Certification Simulator</h2>
+              <p className="text-xs text-slate-400">Practice real-world scenario questions for CCNA, CCNP ENCOR, and Palo Alto PCNSA exams.</p>
+            </div>
+
+            {!quizFinished ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-6 shadow-xl">
+                <div className="flex justify-between items-center text-xs font-mono border-b border-slate-800 pb-3">
+                  <span className="text-cyan-400 font-bold">{INTERVIEW_QUESTIONS[quizIndex].topic}</span>
+                  <span className="text-slate-400">Question {quizIndex + 1} of {INTERVIEW_QUESTIONS.length}</span>
+                </div>
+
+                <h3 className="font-bold text-sm text-slate-100 leading-relaxed">
+                  {INTERVIEW_QUESTIONS[quizIndex].question}
+                </h3>
+
+                <div className="space-y-2.5">
+                  {INTERVIEW_QUESTIONS[quizIndex].options.map((opt, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setSelectedAnswer(idx)}
+                      className={`w-full p-3 rounded-lg border text-left text-xs transition-all ${
+                        selectedAnswer === idx 
+                          ? 'bg-cyan-950 border-cyan-500 text-cyan-200' 
+                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:bg-slate-800/40'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+
+                {selectedAnswer !== null && (
+                  <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 text-xs text-slate-300 space-y-2">
+                    <span className="font-bold text-cyan-400">Technical Rationale:</span>
+                    <p className="leading-relaxed">{INTERVIEW_QUESTIONS[quizIndex].explanation}</p>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    disabled={selectedAnswer === null}
+                    onClick={() => {
+                      if (selectedAnswer === INTERVIEW_QUESTIONS[quizIndex].correctIndex) {
+                        setQuizScore(prev => prev + 1);
+                      }
+                      if (quizIndex + 1 < INTERVIEW_QUESTIONS.length) {
+                        setQuizIndex(prev => prev + 1);
+                        setSelectedAnswer(null);
+                      } else {
+                        setQuizFinished(true);
+                        addXp(200, 150);
+                      }
+                    }}
+                    className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white font-medium text-xs rounded-lg transition-all"
+                  >
+                    {quizIndex + 1 < INTERVIEW_QUESTIONS.length ? 'Next Question' : 'Complete Quiz'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center space-y-4">
+                <CheckCircle className="w-12 h-12 text-emerald-400 mx-auto" />
+                <h3 className="font-bold text-xl text-white">Interview Assessment Completed</h3>
+                <p className="text-xs text-slate-300">
+                  Your Score: <span className="font-bold font-mono text-cyan-400 text-sm">{quizScore} / {INTERVIEW_QUESTIONS.length} Correct</span>
+                </p>
+                <p className="text-xs text-slate-400">+200 XP and +150 Coins added to your career profile!</p>
+                
+                <button
+                  onClick={() => {
+                    setQuizIndex(0);
+                    setSelectedAnswer(null);
+                    setQuizScore(0);
+                    setQuizFinished(false);
+                  }}
+                  className="px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white font-medium text-xs rounded-lg transition-all"
+                >
+                  Restart Prep Exam
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+      </main>
+
+      {/* ================= EXPORT SOURCE CODE MODAL ================= */}
+      {isExportOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-3xl w-full flex flex-col max-h-[85vh] shadow-2xl">
+            <div className="px-5 py-4 border-b border-slate-800 flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <Code className="w-5 h-5 text-cyan-400" />
+                <h3 className="font-bold text-sm text-white">Export Source Code for GitHub</h3>
+              </div>
+              <button 
+                onClick={() => setIsExportOpen(false)}
+                className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* File Selector Tabs */}
+            <div className="flex border-b border-slate-800 bg-slate-950 px-4 pt-2 gap-2 text-xs font-mono">
+              {['App.jsx', 'package.json', 'README.md'].map(fileName => (
+                <button
+                  key={fileName}
+                  onClick={() => setSelectedFileToExport(fileName)}
+                  className={`px-3 py-1.5 rounded-t border-t border-x transition-all ${
+                    selectedFileToExport === fileName 
+                      ? 'bg-slate-900 border-slate-800 text-cyan-400 font-bold' 
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {fileName}
+                </button>
+              ))}
+            </div>
+
+            {/* File Content Preview */}
+            <div className="flex-1 p-4 overflow-y-auto bg-slate-950 font-mono text-xs text-slate-300">
+              <pre className="whitespace-pre-wrap leading-relaxed">
+                {selectedFileToExport === 'package.json' ? PACKAGE_JSON_CODE :
+                 selectedFileToExport === 'README.md' ? README_MD_CODE :
+                 `// Insert App.jsx full source code here or copy directly`}
+              </pre>
+            </div>
+
+            <div className="p-4 border-t border-slate-800 bg-slate-900 flex justify-between items-center">
+              <span className="text-xs text-slate-400">Copy this code into your repository folder.</span>
+              <button
+                onClick={() => {
+                  const textToCopy = selectedFileToExport === 'package.json' ? PACKAGE_JSON_CODE : README_MD_CODE;
+                  navigator.clipboard.writeText(textToCopy);
+                  setCopySuccess(true);
+                  setTimeout(() => setCopySuccess(false), 2000);
+                }}
+                className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium rounded-lg transition-all flex items-center gap-2"
+              >
+                {copySuccess ? <Check className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
+                <span>{copySuccess ? 'Copied to Clipboard!' : 'Copy Selected File'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= FOOTER ================= */}
+      <footer className="bg-slate-900 border-t border-slate-800 px-6 py-3 text-center text-[11px] text-slate-500 flex flex-col sm:flex-row justify-between items-center gap-2">
+        <span>NETOPS: Enterprise Network & Cyber Defense Simulator</span>
+        <span className="font-mono">Simulated Devices & Topology Engine v2.4</span>
+      </footer>
+
+    </div>
+  );
+}
